@@ -2,17 +2,34 @@ import { useEffect, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000/api/v1";
 const TOKEN_STORAGE_KEY = "ruleflow.tokens";
+const departmentOptions = ["finance", "hr", "it", "operations"];
+const priorityOptions = ["low", "medium", "high", "urgent"];
+const statusOptions = ["todo", "in_progress", "done"];
 
-const emptyTaskForm = {
-  title: "",
-  description: "",
-  priority: "medium",
-  due_date: "",
-  department: "",
-  min_experience_years: "",
-  location: "",
-  max_active_tasks: "",
-};
+function createEmptyAuthForm() {
+  return {
+    email: "",
+    password: "",
+    full_name: "",
+    department: "it",
+    experience_years: "0",
+    location: "",
+  };
+}
+
+function createEmptyTaskForm() {
+  return {
+    title: "",
+    description: "",
+    priority: "medium",
+    status: "todo",
+    due_date: "",
+    department: "",
+    min_experience_years: "",
+    location: "",
+    max_active_tasks: "",
+  };
+}
 
 function readStoredTokens() {
   const raw = window.localStorage.getItem(TOKEN_STORAGE_KEY);
@@ -38,6 +55,11 @@ async function apiFetch(path, options = {}, accessToken) {
   });
 
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const payload = await response.json();
+      throw new Error(payload.detail || "Request failed");
+    }
     const message = await response.text();
     throw new Error(message || "Request failed");
   }
@@ -54,6 +76,16 @@ function formatDate(value) {
     return "-";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatDateTimeInput(value) {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  const adjusted = new Date(date.getTime() - offset * 60 * 1000);
+  return adjusted.toISOString().slice(0, 16);
 }
 
 function formatRules(task) {
@@ -75,24 +107,53 @@ function formatRules(task) {
   return parts.length > 0 ? parts.join(", ") : "No rules";
 }
 
+function buildRulesPayload(taskForm) {
+  return {
+    department: taskForm.department || null,
+    min_experience_years:
+      taskForm.min_experience_years === "" ? null : Number(taskForm.min_experience_years),
+    location: taskForm.location || null,
+    max_active_tasks: taskForm.max_active_tasks === "" ? null : Number(taskForm.max_active_tasks),
+  };
+}
+
+function buildTaskCreatePayload(taskForm) {
+  return {
+    title: taskForm.title,
+    description: taskForm.description || null,
+    priority: taskForm.priority,
+    due_date: taskForm.due_date ? new Date(taskForm.due_date).toISOString() : null,
+    rules: buildRulesPayload(taskForm),
+  };
+}
+
+function buildTaskUpdatePayload(taskForm) {
+  return {
+    title: taskForm.title,
+    description: taskForm.description || null,
+    priority: taskForm.priority,
+    status: taskForm.status,
+    due_date: taskForm.due_date ? new Date(taskForm.due_date).toISOString() : null,
+    rules: buildRulesPayload(taskForm),
+  };
+}
+
 function App() {
   const [authMode, setAuthMode] = useState("login");
-  const [authForm, setAuthForm] = useState({
-    email: "",
-    password: "",
-    full_name: "",
-  });
+  const [authForm, setAuthForm] = useState(() => createEmptyAuthForm());
   const [tokens, setTokens] = useState(() => readStoredTokens());
   const [me, setMe] = useState(null);
   const [myTasks, setMyTasks] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
   const [eligibleUsers, setEligibleUsers] = useState({});
-  const [taskForm, setTaskForm] = useState(emptyTaskForm);
+  const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
+  const [editingTaskId, setEditingTaskId] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const accessToken = tokens?.access_token || null;
   const isAdminView = me?.role === "admin" || me?.role === "manager";
+  const canDeleteTasks = me?.role === "admin";
 
   useEffect(() => {
     writeStoredTokens(tokens);
@@ -103,6 +164,8 @@ function App() {
       setMe(null);
       setMyTasks([]);
       setAllTasks([]);
+      setEditingTaskId(null);
+      setTaskForm(createEmptyTaskForm());
       return;
     }
 
@@ -117,7 +180,7 @@ function App() {
         }
         setMe(profile);
 
-        const myTaskList = await apiFetch("/tasks/my-eligible-tasks?limit=50", {}, accessToken);
+        const myTaskList = await apiFetch("/my-eligible-tasks?limit=50", {}, accessToken);
         if (cancelled) {
           return;
         }
@@ -152,13 +215,18 @@ function App() {
       return;
     }
 
-    const myTaskList = await apiFetch("/tasks/my-eligible-tasks?limit=50", {}, accessToken);
+    const myTaskList = await apiFetch("/my-eligible-tasks?limit=50", {}, accessToken);
     setMyTasks(myTaskList);
 
     if (isAdminView) {
       const taskList = await apiFetch("/tasks?limit=50", {}, accessToken);
       setAllTasks(taskList);
     }
+  }
+
+  function resetTaskEditor() {
+    setEditingTaskId(null);
+    setTaskForm(createEmptyTaskForm());
   }
 
   async function handleAuthSubmit(event) {
@@ -174,6 +242,9 @@ function App() {
             email: authForm.email,
             full_name: authForm.full_name,
             password: authForm.password,
+            department: authForm.department,
+            experience_years: Number(authForm.experience_years),
+            location: authForm.location,
           }),
         });
       }
@@ -188,9 +259,8 @@ function App() {
 
       setTokens(nextTokens);
       setAuthForm({
+        ...createEmptyAuthForm(),
         email: authForm.email,
-        password: "",
-        full_name: "",
       });
     } catch (err) {
       setError(err.message);
@@ -199,35 +269,33 @@ function App() {
     }
   }
 
-  async function createTask(event) {
+  async function submitTask(event) {
     event.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      await apiFetch(
-        "/tasks/",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: taskForm.title,
-            description: taskForm.description || null,
-            priority: taskForm.priority,
-            due_date: taskForm.due_date ? new Date(taskForm.due_date).toISOString() : null,
-            rules: {
-              department: taskForm.department || null,
-              min_experience_years:
-                taskForm.min_experience_years === "" ? null : Number(taskForm.min_experience_years),
-              location: taskForm.location || null,
-              max_active_tasks:
-                taskForm.max_active_tasks === "" ? null : Number(taskForm.max_active_tasks),
-            },
-          }),
-        },
-        accessToken,
-      );
+      if (editingTaskId) {
+        await apiFetch(
+          `/tasks/${editingTaskId}`,
+          {
+            method: "PUT",
+            body: JSON.stringify(buildTaskUpdatePayload(taskForm)),
+          },
+          accessToken,
+        );
+      } else {
+        await apiFetch(
+          "/tasks/",
+          {
+            method: "POST",
+            body: JSON.stringify(buildTaskCreatePayload(taskForm)),
+          },
+          accessToken,
+        );
+      }
 
-      setTaskForm(emptyTaskForm);
+      resetTaskEditor();
       await refreshData();
     } catch (err) {
       setError(err.message);
@@ -263,6 +331,59 @@ function App() {
     }
   }
 
+  async function deleteTask(taskId) {
+    const confirmed = window.confirm(`Delete task ${taskId}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    try {
+      await apiFetch(
+        `/tasks/${taskId}`,
+        {
+          method: "DELETE",
+        },
+        accessToken,
+      );
+      if (editingTaskId === taskId) {
+        resetTaskEditor();
+      }
+      setEligibleUsers((current) => {
+        const next = { ...current };
+        delete next[taskId];
+        return next;
+      });
+      await refreshData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startEditTask(task) {
+    setEditingTaskId(task.id);
+    setTaskForm({
+      title: task.title,
+      description: task.description || "",
+      priority: task.priority,
+      status: task.status,
+      due_date: formatDateTimeInput(task.due_date),
+      department: task.rule_department || "",
+      min_experience_years:
+        task.rule_min_experience_years === null || task.rule_min_experience_years === undefined
+          ? ""
+          : String(task.rule_min_experience_years),
+      location: task.rule_location || "",
+      max_active_tasks:
+        task.rule_max_active_tasks === null || task.rule_max_active_tasks === undefined
+          ? ""
+          : String(task.rule_max_active_tasks),
+    });
+  }
+
   function logout() {
     setTokens(null);
     setMe(null);
@@ -270,6 +391,8 @@ function App() {
     setAllTasks([]);
     setEligibleUsers({});
     setError("");
+    setEditingTaskId(null);
+    setTaskForm(createEmptyTaskForm());
   }
 
   if (!accessToken) {
@@ -286,18 +409,64 @@ function App() {
             </button>
           </div>
 
-          <form onSubmit={handleAuthSubmit}>
+          <form onSubmit={handleAuthSubmit} className={authMode === "signup" ? "form-grid" : ""}>
             {authMode === "signup" && (
-              <label>
-                Full Name
-                <input
-                  value={authForm.full_name}
-                  onChange={(event) =>
-                    setAuthForm((current) => ({ ...current, full_name: event.target.value }))
-                  }
-                  required
-                />
-              </label>
+              <>
+                <label>
+                  Full Name
+                  <input
+                    value={authForm.full_name}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({ ...current, full_name: event.target.value }))
+                    }
+                    required
+                  />
+                </label>
+
+                <label>
+                  Department
+                  <select
+                    value={authForm.department}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({ ...current, department: event.target.value }))
+                    }
+                  >
+                    {departmentOptions.map((department) => (
+                      <option key={department} value={department}>
+                        {department}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Experience
+                  <input
+                    type="number"
+                    min="0"
+                    max="60"
+                    value={authForm.experience_years}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({
+                        ...current,
+                        experience_years: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </label>
+
+                <label>
+                  Location
+                  <input
+                    value={authForm.location}
+                    onChange={(event) =>
+                      setAuthForm((current) => ({ ...current, location: event.target.value }))
+                    }
+                    required
+                  />
+                </label>
+              </>
             )}
 
             <label>
@@ -343,6 +512,7 @@ function App() {
         <p>Name: {me?.full_name}</p>
         <p>Role: {me?.role}</p>
         <p>Department: {me?.department}</p>
+        <p>Experience: {me?.experience_years}</p>
         <p>Location: {me?.location}</p>
         <p>Active Tasks: {me?.active_task_count}</p>
         <div className="button-row">
@@ -388,9 +558,11 @@ function App() {
                       value={task.status}
                       onChange={(event) => updateTaskStatus(task.id, event.target.value)}
                     >
-                      <option value="todo">todo</option>
-                      <option value="in_progress">in_progress</option>
-                      <option value="done">done</option>
+                      {statusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
                     </select>
                   </td>
                 </tr>
@@ -403,8 +575,8 @@ function App() {
       {isAdminView && (
         <>
           <div className="panel">
-            <h2>Create Task With Rules</h2>
-            <form onSubmit={createTask}>
+            <h2>{editingTaskId ? `Update Task ${editingTaskId}` : "Create Task"}</h2>
+            <form onSubmit={submitTask} className="task-form">
               <label>
                 Title
                 <input
@@ -434,10 +606,27 @@ function App() {
                     setTaskForm((current) => ({ ...current, priority: event.target.value }))
                   }
                 >
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                  <option value="urgent">urgent</option>
+                  {priorityOptions.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {priority}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Status
+                <select
+                  value={taskForm.status}
+                  onChange={(event) =>
+                    setTaskForm((current) => ({ ...current, status: event.target.value }))
+                  }
+                >
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -461,10 +650,11 @@ function App() {
                   }
                 >
                   <option value="">any</option>
-                  <option value="finance">finance</option>
-                  <option value="hr">hr</option>
-                  <option value="it">it</option>
-                  <option value="operations">operations</option>
+                  {departmentOptions.map((department) => (
+                    <option key={department} value={department}>
+                      {department}
+                    </option>
+                  ))}
                 </select>
               </label>
 
@@ -473,6 +663,7 @@ function App() {
                 <input
                   type="number"
                   min="0"
+                  max="60"
                   value={taskForm.min_experience_years}
                   onChange={(event) =>
                     setTaskForm((current) => ({
@@ -508,9 +699,16 @@ function App() {
                 />
               </label>
 
-              <button type="submit" disabled={loading}>
-                {loading ? "Please wait" : "Create Task"}
-              </button>
+              <div className="button-row">
+                <button type="submit" disabled={loading}>
+                  {loading ? "Please wait" : editingTaskId ? "Update Task" : "Create Task"}
+                </button>
+                {editingTaskId && (
+                  <button type="button" onClick={resetTaskEditor}>
+                    Cancel
+                  </button>
+                )}
+              </div>
             </form>
           </div>
 
@@ -529,6 +727,7 @@ function App() {
                     <th>Assigned User</th>
                     <th>Rules</th>
                     <th>Eligible Users</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -548,11 +747,24 @@ function App() {
                           <ul>
                             {eligibleUsers[task.id].map((user) => (
                               <li key={user.id}>
-                                {user.full_name} | {user.department} | {user.experience_years} | {user.active_task_count}
+                                {user.full_name} | {user.department} | {user.experience_years} |{" "}
+                                {user.active_task_count}
                               </li>
                             ))}
                           </ul>
                         )}
+                      </td>
+                      <td>
+                        <div className="button-stack">
+                          <button type="button" onClick={() => startEditTask(task)}>
+                            Edit
+                          </button>
+                          {canDeleteTasks && (
+                            <button type="button" onClick={() => deleteTask(task.id)}>
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

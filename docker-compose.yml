@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: task_manager
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d task_manager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: RuleFlow Task Manager
+      ENVIRONMENT: development
+      API_V1_PREFIX: /api/v1
+      SECRET_KEY: super-secret-for-local-dev
+      ACCESS_TOKEN_EXPIRE_MINUTES: 15
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/task_manager
+      REDIS_URL: redis://redis:6379/0
+      CACHE_TTL_SECONDS: 120
+      BACKEND_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      SEED_ADMIN_EMAIL: admin@example.com
+      SEED_ADMIN_PASSWORD: admin12345
+      SEED_MANAGER_EMAIL: manager@example.com
+      SEED_MANAGER_PASSWORD: manager12345
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    build:
+      context: ./backend
+    environment:
+      APP_NAME: RuleFlow Task Manager
+      ENVIRONMENT: development
+      API_V1_PREFIX: /api/v1
+      SECRET_KEY: super-secret-for-local-dev
+      ACCESS_TOKEN_EXPIRE_MINUTES: 15
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/task_manager
+      REDIS_URL: redis://redis:6379/0
+      CACHE_TTL_SECONDS: 120
+      BACKEND_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      SEED_ADMIN_EMAIL: admin@example.com
+      SEED_ADMIN_PASSWORD: admin12345
+      SEED_MANAGER_EMAIL: manager@example.com
+      SEED_MANAGER_PASSWORD: manager12345
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    command: >
+      sh -c "celery -A app.core.celery_app.celery_app worker -l info"
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE: http://localhost:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:

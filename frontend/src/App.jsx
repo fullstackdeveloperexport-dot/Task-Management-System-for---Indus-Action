@@ -144,6 +144,7 @@ function App() {
   const [tokens, setTokens] = useState(() => readStoredTokens());
   const [me, setMe] = useState(null);
   const [myTasks, setMyTasks] = useState([]);
+  const [myAssignedTasks, setMyAssignedTasks] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
   const [eligibleUsers, setEligibleUsers] = useState({});
   const [taskForm, setTaskForm] = useState(() => createEmptyTaskForm());
@@ -186,6 +187,12 @@ function App() {
         }
         setMyTasks(myTaskList);
 
+        const myAssignedTaskList = await apiFetch("/my-assigned-tasks?limit=50", {}, accessToken);
+        if (cancelled) {
+          return;
+        }
+        setMyAssignedTasks(myAssignedTaskList);
+
         if (profile.role === "admin" || profile.role === "manager") {
           const taskList = await apiFetch("/tasks?limit=50", {}, accessToken);
           if (cancelled) {
@@ -217,6 +224,9 @@ function App() {
 
     const myTaskList = await apiFetch("/my-eligible-tasks?limit=50", {}, accessToken);
     setMyTasks(myTaskList);
+
+    const myAssignedTaskList = await apiFetch("/my-assigned-tasks?limit=50", {}, accessToken);
+    setMyAssignedTasks(myAssignedTaskList);
 
     if (isAdminView) {
       const taskList = await apiFetch("/tasks?limit=50", {}, accessToken);
@@ -388,6 +398,7 @@ function App() {
     setTokens(null);
     setMe(null);
     setMyTasks([]);
+    setMyAssignedTasks([]);
     setAllTasks([]);
     setEligibleUsers({});
     setError("");
@@ -553,6 +564,49 @@ function App() {
                   <td>{task.priority}</td>
                   <td>{formatDate(task.due_date)}</td>
                   <td>{task.assignment_reason || "-"}</td>
+                  <td>
+                    <select
+                      value={task.status}
+                      onChange={(event) => updateTaskStatus(task.id, event.target.value)}
+                    >
+                      {statusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="panel">
+        <h2>My Assigned Tasks</h2>
+        {myAssignedTasks.length === 0 ? (
+          <p>No tasks found.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Due Date</th>
+                <th>Update Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {myAssignedTasks.map((task) => (
+                <tr key={task.id}>
+                  <td>{task.id}</td>
+                  <td>{task.title}</td>
+                  <td>{task.status}</td>
+                  <td>{task.priority}</td>
+                  <td>{formatDate(task.due_date)}</td>
                   <td>
                     <select
                       value={task.status}

@@ -2,52 +2,133 @@
 
 Scalable task management system with dynamic rule-based task assignment built with FastAPI, PostgreSQL, Redis, Celery, React, and Docker Compose.
 
-## Architecture Decisions
+## Architecture Overview
 
-- FastAPI is used for the API layer and SQLAlchemy/Alembic handle persistence and migrations.
-- PostgreSQL is the source of truth for users, tasks, and refresh tokens.
-- Redis is used for cache keys on the hot read endpoints and as the Celery broker/result backend.
-- Celery handles background eligibility recomputation so task create and update requests stay fast.
-- Tasks are never manually assigned. The worker selects the assignee from eligible users.
+This system implements an event-driven, asynchronous task assignment engine designed for high performance and scalability.
 
-## Where Records Are Saved
+### Core Components
+- **Backend API**: FastAPI for low-latency API responses (<200ms)
+- **Database**: PostgreSQL with optimized indexes for rule-based queries
+- **Cache**: Redis for caching precomputed eligible tasks
+- **Background Workers**: Celery for heavy computation (eligibility engine)
+- **Frontend**: React dashboard for users and admins
+- **Containerization**: Docker Compose for easy deployment
 
-- User records: PostgreSQL `users` table
-- Task records: PostgreSQL `tasks` table
-- Refresh token records: PostgreSQL `refresh_tokens` table
-- Eligible-user and my-task cached payloads: Redis
+### Architecture Pattern: Event-Driven + Async Processing
 
-## Rule Engine Design
+```
+Client → API → DB
+         ↓
+      Event Queue (Redis)
+         ↓
+      Worker (Celery)
+         ↓
+Eligibility Engine + Assignment
+```
 
-Each task stores compiled rule fields on the task row:
+**Why this design?**
+- APIs stay fast by offloading heavy logic to background workers
+- System scales independently (API, workers, DB)
+- Users get immediate feedback while processing happens async
 
-- `rule_department`
-- `rule_min_experience_years`
-- `rule_location`
-- `rule_max_active_tasks`
+## Database Design
 
-Each user stores the assignment attributes used by the rule engine:
+### Tables
 
-- `department`
-- `experience_years`
-- `location`
-- `active_task_count`
-- `is_active`
+**users**
+- `id`, `email`, `full_name`, `password_hash`, `role`, `department` (indexed), `experience_years` (indexed), `location` (indexed), `active_task_count` (indexed, denormalized), `is_active` (indexed)
 
-Assignment selection order:
+**tasks**
+- `id`, `title`, `status` (indexed), `priority`, `due_date` (indexed), `created_by_id`, `assigned_user_id`, `assignment_state`, `assignment_reason`
+- Rule fields: `rule_department`, `rule_min_experience_years`, `rule_location`, `rule_max_active_tasks` (stored as structured data, not JSON)
 
-1. Lowest `active_task_count`
-2. Highest `experience_years`
-3. Lowest `user.id`
+**task_eligible_users** (precomputed)
+- `task_id` (indexed), `user_id` (indexed), composite index `(task_id, user_id)`
 
-If no user matches, the task remains unassigned with `assignment_state = "no_match"`.
+**task_assignments** (for history, if needed)
 
-## Recompute Strategy
+### Performance Optimizations
+- **Indexing**: users(department, experience_years), users(active_task_count), tasks(status, due_date)
+- **Denormalization**: `active_task_count` avoids COUNT queries
+- **Precomputation**: `task_eligible_users` table for fast eligible task queries
 
-- Task created: task row is saved, then Celery recomputes eligibility.
-- Task updated: if rules change, Celery recomputes that task again.
-- User profile updated: Celery scans only compatible tasks plus tasks already assigned to that user.
-- Manual recompute: `POST /tasks/recompute-eligibility` queues task, user, or full-scan recomputation.
+## Rule Engine
+
+**DO NOT** loop through users in Python. **DO** convert rules to SQL queries.
+
+Example:
+```sql
+SELECT id FROM users
+WHERE department = 'Finance'
+AND experience_years >= 4
+AND active_task_count < 5;
+```
+
+This leverages PostgreSQL's query optimizer for fast filtering.
+
+### Assignment Strategy
+- Select least loaded user (lowest `active_task_count`)
+- Tie-breakers: highest `experience_years`, then lowest `user.id`
+- No eligible users? Mark as `UNASSIGNED` and retry later via worker
+
+## Background Processing Strategy
+
+Recompute triggers:
+- **Task Creation**: Queue job to compute eligible users and assign
+- **Rule Update**: Recompute only affected task
+- **User Update**: Recompute tasks where user matches rule filters (department, experience threshold, etc.)
+
+Optimization: Track rule filters to recompute only relevant tasks, not all.
+
+## API Optimization
+
+**GET /my-eligible-tasks** (hardest endpoint)
+
+Flow:
+1. Check Redis cache
+2. Miss → Query `task_eligible_users` table
+3. Cache result (TTL: 5-15 minutes)
+
+**GET /my-assigned-tasks**
+- Query `tasks` where `assigned_user_id = current_user.id`
+
+## Caching Strategy
+
+Redis keys:
+- `user:{id}:eligible-tasks:{limit}:{offset}`
+- `user:{id}:assigned-tasks:{limit}:{offset}`
+- `task:{id}:eligible-users:{limit}:{offset}`
+
+TTL: 5-15 minutes or event-based invalidation on changes.
+
+## Trade-offs
+
+- **Consistency vs Performance**: Precomputed eligible users may be stale, but fast. Recompute on changes.
+- **Caching vs Freshness**: Short TTL balances speed and accuracy.
+
+## Seed Data
+
+Run with: `docker-compose exec backend python -m app.db.seed --users 1000 --tasks 500`
+
+For 100k users: `--users 100000` (may take time due to recomputation).
+
+## Running the System
+
+```bash
+docker-compose up --build
+```
+
+Access:
+- Frontend: http://localhost:5173
+- API Docs: http://localhost:8000/docs
+
+## Common Mistakes Avoided
+
+- ❌ Rule engine in Python loops
+- ❌ No indexing on rule fields
+- ❌ No caching on hot paths
+- ❌ Synchronous assignment blocking API
+- ❌ Recomputing all tasks on every change
 
 ## Indexing Strategy
 

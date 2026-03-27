@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, delete
 from sqlalchemy.orm import Session
 
 from app.models.enums import AssignmentStateEnum, TaskStatusEnum
 from app.models.task import Task
+from app.models.task_eligible_user import TaskEligibleUser
 from app.models.user import User
 from app.services.cache_service import invalidate_task_caches, invalidate_user_caches
 from app.services.task_service import adjust_user_active_task_count, is_active_task
@@ -72,6 +73,15 @@ def recompute_task_assignment(db: Session, task_id: int, reason: str) -> Assignm
     eligible_user_count = len(eligible_users)
     selected_user = eligible_users[0] if eligible_users else None
     new_assignee_id = selected_user.id if selected_user else None
+
+    db.execute(
+        delete(TaskEligibleUser).where(TaskEligibleUser.task_id == task.id)
+    )
+    if eligible_users:
+        db.add_all([
+            TaskEligibleUser(task_id=task.id, user_id=user.id)
+            for user in eligible_users
+        ])
 
     if previous_assignee_id != new_assignee_id:
         if previous_assignee_id and is_active_task(task.status):

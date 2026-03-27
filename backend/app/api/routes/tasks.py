@@ -6,6 +6,7 @@ from app.api.deps import RequireRoles, get_current_user
 from app.core.database import get_db
 from app.models.enums import RoleEnum, TaskStatusEnum
 from app.models.task import Task
+from app.models.task_eligible_user import TaskEligibleUser
 from app.models.user import User
 from app.schemas.task import (
     EligibleUserRead,
@@ -21,7 +22,8 @@ from app.services.cache_service import (
     get_cached_payload,
     invalidate_task_caches,
     invalidate_user_caches,
-    my_tasks_cache_key,
+    my_assigned_tasks_cache_key,
+    my_eligible_tasks_cache_key,
     set_cached_payload,
 )
 from app.services.task_service import apply_task_update, create_task, delete_task, get_task_or_404
@@ -50,7 +52,43 @@ def get_my_eligible_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[TaskRead]:
-    cache_key = my_tasks_cache_key(current_user.id, limit, offset)
+    cache_key = my_eligible_tasks_cache_key(current_user.id, limit, offset)
+    cached = get_cached_payload(cache_key)
+    if cached is not None:
+        return [TaskRead.model_validate(item) for item in cached]
+
+    tasks = (
+        db.execute(
+            select(Task)
+            .join(TaskEligibleUser, TaskEligibleUser.task_id == Task.id)
+            .where(TaskEligibleUser.user_id == current_user.id)
+            .order_by(Task.due_date.asc().nullslast(), Task.priority.desc(), Task.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
+    payload = [TaskRead.model_validate(task).model_dump(mode="json") for task in tasks]
+    set_cached_payload(cache_key, payload)
+    return [TaskRead.model_validate(item) for item in payload]
+
+
+@router.get(
+    "/my-assigned-tasks",
+    response_model=list[TaskRead],
+)
+@standalone_router.get(
+    "/my-assigned-tasks",
+    response_model=list[TaskRead],
+)
+def get_my_assigned_tasks(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[TaskRead]:
+    cache_key = my_assigned_tasks_cache_key(current_user.id, limit, offset)
     cached = get_cached_payload(cache_key)
     if cached is not None:
         return [TaskRead.model_validate(item) for item in cached]

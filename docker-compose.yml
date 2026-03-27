@@ -79,10 +79,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       CACHE_TTL_SECONDS: 120
       BACKEND_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
-      SEED_ADMIN_EMAIL: admin@example.com
-      SEED_ADMIN_PASSWORD: admin12345
-      SEED_MANAGER_EMAIL: manager@example.com
-      SEED_MANAGER_PASSWORD: manager12345
+      SEED_ADMIN_EMAIL: admin@indusaction.org
+      SEED_ADMIN_PASSWORD: indusaction.org
+      SEED_MANAGER_EMAIL: manager@indusaction.org
+      SEED_MANAGER_PASSWORD: Nta9931@@
     depends_on:
       postgres:
         condition: service_healthy

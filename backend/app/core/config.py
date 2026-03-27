@@ -15,10 +15,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     cache_ttl_seconds: int = 120
     backend_cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
-    seed_admin_email: str = "admin@example.com"
-    seed_admin_password: str = "admin12345"
-    seed_manager_email: str = "manager@example.com"
-    seed_manager_password: str = "manager12345"
+    seed_admin_email: str = "admin@indusaction.org"
+    seed_admin_password: str = "indusaction.org"
+    seed_manager_email: str = "manager@indusaction.org"
+    seed_manager_password: str = "Nta9931@@"
 
     model_config = SettingsConfigDict(
         env_file=".env",

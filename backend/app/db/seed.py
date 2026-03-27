@@ -38,6 +38,15 @@ def ensure_seed_admins(db):
             "location": "Mumbai",
             "password": settings.seed_manager_password,
         },
+        {
+            "email": "info@indusaction.org",
+            "full_name": "Demo User",
+            "role": RoleEnum.USER,
+            "department": DepartmentEnum.IT,
+            "experience_years": 5,
+            "location": "Delhi",
+            "password": "demo12345",
+        },
     ]
 
     for item in defaults:

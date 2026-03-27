@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000/api/v1";
 const TOKEN_STORAGE_KEY = "ruleflow.tokens";
@@ -69,6 +70,15 @@ async function apiFetch(path, options = {}, accessToken) {
   }
 
   return response.json();
+}
+
+async function fetchTaskStats(accessToken) {
+  const tasks = await apiFetch("/tasks?limit=1000", {}, accessToken);
+  const stats = { todo: 0, in_progress: 0, done: 0 };
+  tasks.forEach(task => {
+    stats[task.status] = (stats[task.status] || 0) + 1;
+  });
+  return Object.entries(stats).map(([status, count]) => ({ status, count }));
 }
 
 function formatDate(value) {
@@ -151,6 +161,7 @@ function App() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [taskStats, setTaskStats] = useState([]);
 
   const accessToken = tokens?.access_token || null;
   const isAdminView = me?.role === "admin" || me?.role === "manager";
@@ -199,6 +210,12 @@ function App() {
             return;
           }
           setAllTasks(taskList);
+
+          const stats = await fetchTaskStats(accessToken);
+          if (cancelled) {
+            return;
+          }
+          setTaskStats(stats);
         }
       } catch (err) {
         setError(err.message);
@@ -231,6 +248,9 @@ function App() {
     if (isAdminView) {
       const taskList = await apiFetch("/tasks?limit=50", {}, accessToken);
       setAllTasks(taskList);
+
+      const stats = await fetchTaskStats(accessToken);
+      setTaskStats(stats);
     }
   }
 
@@ -401,6 +421,7 @@ function App() {
     setMyAssignedTasks([]);
     setAllTasks([]);
     setEligibleUsers({});
+    setTaskStats([]);
     setError("");
     setEditingTaskId(null);
     setTaskForm(createEmptyTaskForm());
@@ -628,6 +649,47 @@ function App() {
 
       {isAdminView && (
         <>
+          <div className="panel">
+            <h2>Dashboard Analytics</h2>
+            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: '300px' }}>
+                <h3>Task Status Distribution</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={taskStats}
+                      dataKey="count"
+                      nameKey="status"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      fill="#8884d8"
+                      label
+                    >
+                      {taskStats.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={['#0088FE', '#00C49F', '#FFBB28'][index % 3]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div style={{ flex: 1, minWidth: '300px' }}>
+                <h3>Task Status Bar Chart</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={taskStats}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="status" />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="count" fill="#8884d8" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
           <div className="panel">
             <h2>{editingTaskId ? `Update Task ${editingTaskId}` : "Create Task"}</h2>
             <form onSubmit={submitTask} className="task-form">

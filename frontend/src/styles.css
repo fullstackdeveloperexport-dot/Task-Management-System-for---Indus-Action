@@ -4,6 +4,20 @@ body {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
   color: #333;
+  position: relative;
+}
+
+body::before {
+  content: "Indus Action";
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 120px;
+  color: rgba(255, 255, 255, 0.1);
+  z-index: -1;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .page {

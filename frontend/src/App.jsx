@@ -56,6 +56,11 @@ function formatLabel(value) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function formatDepartmentOption(value) {
+  if (value === "hr" || value === "it") return value.toUpperCase();
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function buildChartData(tasks) {
   const counts = {};
   for (const task of tasks) {
@@ -234,7 +239,7 @@ function TaskManagementView({ isStaff, tasks, loading, taskForm, setTaskForm, cr
               <select value={taskForm.department} onChange={event => setTaskForm(form => ({ ...form, department: event.target.value }))}>
                 <option value="">Any</option>
                 {DEPT_OPTIONS.map(dep => (
-                  <option key={dep} value={dep}>{formatLabel(dep)}</option>
+                  <option key={dep} value={dep}>{formatDepartmentOption(dep)}</option>
                 ))}
               </select>
             </label>
@@ -646,7 +651,7 @@ function AuthCard({ authMode, setAuthMode, authForm, setAuthForm, handleAuthSubm
               Department
               <select value={authForm.department} onChange={event => setAuthForm(form => ({ ...form, department: event.target.value }))}>
                 {DEPT_OPTIONS.map(dep => (
-                  <option key={dep} value={dep}>{dep}</option>
+                  <option key={dep} value={dep}>{formatDepartmentOption(dep)}</option>
                 ))}
               </select>
             </label>

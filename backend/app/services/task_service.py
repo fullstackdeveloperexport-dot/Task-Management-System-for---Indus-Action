@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.enums import AssignmentStateEnum, TaskStatusEnum
 from app.models.task import Task
+from app.models.task_rule import TaskRule
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate
 
@@ -29,6 +30,28 @@ def adjust_user_active_task_count(db: Session, user_id: int, delta: int) -> None
     )
 
 
+def _serialize_task_rules(task: Task) -> list[TaskRule]:
+    rule_specs: list[tuple[str, str, str]] = []
+    if task.rule_department is not None:
+        rule_specs.append(("department", "=", task.rule_department.value))
+    if task.rule_min_experience_years is not None:
+        rule_specs.append(("experience", ">=", str(task.rule_min_experience_years)))
+    if task.rule_location is not None:
+        rule_specs.append(("location", "=", task.rule_location))
+    if task.rule_max_active_tasks is not None:
+        rule_specs.append(("active_tasks", "<", str(task.rule_max_active_tasks)))
+    return [
+        TaskRule(task_id=task.id, field=field, operator=operator, value=value)
+        for field, operator, value in rule_specs
+    ]
+
+
+def sync_task_rules(db: Session, task: Task) -> None:
+    task.task_rules.clear()
+    task.task_rules.extend(_serialize_task_rules(task))
+    db.add(task)
+
+
 def create_task(db: Session, payload: TaskCreate, creator_id: int) -> Task:
     task = Task(
         title=payload.title,
@@ -44,6 +67,8 @@ def create_task(db: Session, payload: TaskCreate, creator_id: int) -> Task:
         rule_max_active_tasks=payload.rules.max_active_tasks,
     )
     db.add(task)
+    db.flush()
+    sync_task_rules(db, task)
     db.commit()
     db.refresh(task)
     return task
@@ -101,6 +126,9 @@ def apply_task_update(db: Session, task: Task, payload: TaskUpdate) -> TaskUpdat
             task.assignment_state = AssignmentStateEnum.PENDING
             task.assignment_reason = "Rule change queued for eligibility recomputation."
 
+    if rules_changed:
+        sync_task_rules(db, task)
+
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -123,7 +151,11 @@ def delete_task(db: Session, task: Task) -> set[int]:
 
 
 def get_task_or_404(db: Session, task_id: int) -> Task:
-    task = db.execute(select(Task).where(Task.id == task_id)).scalar_one_or_none()
+    task = db.execute(
+        select(Task)
+        .options(selectinload(Task.task_rules))
+        .where(Task.id == task_id)
+    ).scalar_one_or_none()
     if not task:
         from fastapi import HTTPException, status
 

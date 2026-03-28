@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import RequireRoles, get_current_user
 from app.core.database import get_db
@@ -16,7 +16,6 @@ from app.schemas.task import (
     TaskRead,
     TaskUpdate,
 )
-from app.services.assignment_service import list_eligible_users
 from app.services.cache_service import (
     eligible_users_cache_key,
     get_cached_payload,
@@ -60,6 +59,7 @@ def get_my_eligible_tasks(
     tasks = (
         db.execute(
             select(Task)
+            .options(selectinload(Task.task_rules))
             .join(TaskEligibleUser, TaskEligibleUser.task_id == Task.id)
             .where(TaskEligibleUser.user_id == current_user.id)
             .order_by(Task.due_date.asc().nullslast(), Task.priority.desc(), Task.id.desc())
@@ -96,6 +96,7 @@ def get_my_assigned_tasks(
     tasks = (
         db.execute(
             select(Task)
+            .options(selectinload(Task.task_rules))
             .where(Task.assigned_user_id == current_user.id)
             .order_by(Task.due_date.asc().nullslast(), Task.priority.desc(), Task.id.desc())
             .limit(limit)
@@ -158,7 +159,13 @@ def list_tasks(
     _: User = Depends(RequireRoles(RoleEnum.ADMIN, RoleEnum.MANAGER)),
 ) -> list[TaskRead]:
     tasks = (
-        db.execute(select(Task).order_by(Task.id.desc()).limit(limit).offset(offset))
+        db.execute(
+            select(Task)
+            .options(selectinload(Task.task_rules))
+            .order_by(Task.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
         .scalars()
         .all()
     )
@@ -251,8 +258,19 @@ def get_eligible_users(
     if cached is not None:
         return [EligibleUserRead.model_validate(item) for item in cached]
 
-    task = get_task_or_404(db, task_id)
-    users = list_eligible_users(db, task, limit=limit, offset=offset)
+    get_task_or_404(db, task_id)
+    users = (
+        db.execute(
+            select(User)
+            .join(TaskEligibleUser, TaskEligibleUser.user_id == User.id)
+            .where(TaskEligibleUser.task_id == task_id)
+            .order_by(User.active_task_count.asc(), User.experience_years.desc(), User.id.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
     payload = [EligibleUserRead.model_validate(user).model_dump(mode="json") for user in users]
     set_cached_payload(cache_key, payload)
     return [EligibleUserRead.model_validate(item) for item in payload]

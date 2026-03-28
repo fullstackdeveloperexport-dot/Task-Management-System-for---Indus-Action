@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import RequireRoles, get_current_user
@@ -10,6 +11,25 @@ from app.workers.assignment_tasks import recompute_tasks_for_user_job
 
 
 router = APIRouter()
+
+
+@router.get(
+    "/",
+    response_model=list[UserRead],
+    dependencies=[Depends(RequireRoles(RoleEnum.ADMIN, RoleEnum.MANAGER))],
+)
+def list_users(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _: User = Depends(RequireRoles(RoleEnum.ADMIN, RoleEnum.MANAGER)),
+) -> list[UserRead]:
+    users = (
+        db.execute(select(User).order_by(User.active_task_count.asc(), User.id.asc()).limit(limit).offset(offset))
+        .scalars()
+        .all()
+    )
+    return [UserRead.model_validate(user) for user in users]
 
 
 @router.get("/me", response_model=UserRead)

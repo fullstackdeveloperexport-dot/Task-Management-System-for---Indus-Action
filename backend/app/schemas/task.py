@@ -12,6 +12,14 @@ class TaskRuleInput(BaseModel):
     max_active_tasks: int | None = Field(default=None, ge=1, le=1000)
 
 
+class TaskRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    field: str
+    operator: str
+    value: str
+
+
 class TaskCreate(BaseModel):
     title: str = Field(min_length=3, max_length=255)
     description: str | None = None
@@ -46,6 +54,7 @@ class TaskRead(BaseModel):
     rule_min_experience_years: int | None
     rule_location: str | None
     rule_max_active_tasks: int | None
+    task_rules: list[TaskRuleRead]
     rules_version: int
     last_eligibility_recomputed_at: datetime | None
     created_at: datetime

@@ -21,8 +21,8 @@ Base URL: `http://localhost:8000/api/v1`
 
 ```json
 {
-  "email": "admin@example.com",
-  "password": "admin12345"
+  "email": "admin@indusaction.org",
+  "password": "indusaction.org"
 }
 ```
 
@@ -69,6 +69,11 @@ Create task with rules.
 }
 ```
 
+Task responses include both:
+
+- compiled rule columns on the task record for fast reads
+- `task_rules` as normalized rows with `field`, `operator`, and `value`
+
 ### `GET /tasks/`
 
 Admin or manager list endpoint.
@@ -76,6 +81,23 @@ Admin or manager list endpoint.
 ### `GET /tasks/{id}`
 
 Task detail endpoint.
+
+Example rule output fragment:
+
+```json
+{
+  "rule_department": "finance",
+  "rule_min_experience_years": 4,
+  "rule_location": "Mumbai",
+  "rule_max_active_tasks": 5,
+  "task_rules": [
+    {"field": "department", "operator": "=", "value": "finance"},
+    {"field": "experience", "operator": ">=", "value": "4"},
+    {"field": "location", "operator": "=", "value": "Mumbai"},
+    {"field": "active_tasks", "operator": "<", "value": "5"}
+  ]
+}
+```
 
 ### `PUT /tasks/{id}`
 
@@ -107,7 +129,7 @@ Optimized eligible-user read with pagination.
 
 ### `GET /my-eligible-tasks`
 
-Returns only tasks assigned to the current user by the rule engine.
+Returns tasks where the current user is in the precomputed eligibility mapping.
 
 ### `GET /tasks/my-eligible-tasks`
 

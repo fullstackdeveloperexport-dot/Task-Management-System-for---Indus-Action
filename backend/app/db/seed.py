@@ -52,20 +52,29 @@ def ensure_seed_admins(db):
     for item in defaults:
         existing = db.execute(select(User).where(User.email == item["email"])).scalar_one_or_none()
         if existing:
-            continue
-        db.add(
-            User(
-                email=item["email"],
-                full_name=item["full_name"],
-                password_hash=get_password_hash(item["password"]),
-                role=item["role"],
-                department=item["department"],
-                experience_years=item["experience_years"],
-                location=item["location"],
-                is_active=True,
-                active_task_count=0,
+            existing.full_name = item["full_name"]
+            existing.password_hash = get_password_hash(item["password"])
+            existing.role = item["role"]
+            existing.department = item["department"]
+            existing.experience_years = item["experience_years"]
+            existing.location = item["location"]
+            existing.is_active = True
+            existing.active_task_count = 0
+            db.add(existing)
+        else:
+            db.add(
+                User(
+                    email=item["email"],
+                    full_name=item["full_name"],
+                    password_hash=get_password_hash(item["password"]),
+                    role=item["role"],
+                    department=item["department"],
+                    experience_years=item["experience_years"],
+                    location=item["location"],
+                    is_active=True,
+                    active_task_count=0,
+                )
             )
-        )
     db.commit()
 
 

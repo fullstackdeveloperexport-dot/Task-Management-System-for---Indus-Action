@@ -8,6 +8,7 @@ from app.models.base import Base, TimestampMixin
 from app.models.enums import AssignmentStateEnum, DepartmentEnum, PriorityEnum, TaskStatusEnum, enum_values
 
 if TYPE_CHECKING:
+    from app.models.task_rule import TaskRule
     from app.models.user import User
 
 
@@ -86,4 +87,11 @@ class Task(TimestampMixin, Base):
         "User",
         back_populates="assigned_tasks",
         foreign_keys=[assigned_user_id],
+    )
+    task_rules: Mapped[list["TaskRule"]] = relationship(
+        "TaskRule",
+        back_populates="task",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="TaskRule.id.asc()",
     )

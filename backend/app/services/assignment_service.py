@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, or_, select, delete
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.enums import AssignmentStateEnum, TaskStatusEnum
@@ -21,21 +21,49 @@ class AssignmentResult:
     eligible_user_count: int
 
 
-def _eligible_users_query(db: Session, task: Task):
-    query = select(User).where(User.is_active.is_(True))
+def _eligible_user_filters(task: Task):
+    filters = [User.is_active.is_(True)]
     if task.rule_department is not None:
-        query = query.where(User.department == task.rule_department)
+        filters.append(User.department == task.rule_department)
     if task.rule_location is not None:
-        query = query.where(User.location == task.rule_location)
+        filters.append(User.location == task.rule_location)
     if task.rule_min_experience_years is not None:
-        query = query.where(User.experience_years >= task.rule_min_experience_years)
+        filters.append(User.experience_years >= task.rule_min_experience_years)
     if task.rule_max_active_tasks is not None:
-        query = query.where(User.active_task_count < task.rule_max_active_tasks)
-    return query.order_by(User.active_task_count.asc(), User.experience_years.desc(), User.id.asc())
+        filters.append(User.active_task_count < task.rule_max_active_tasks)
+    return filters
+
+
+def _eligible_users_query(task: Task):
+    return (
+        select(User)
+        .where(*_eligible_user_filters(task))
+        .order_by(User.active_task_count.asc(), User.experience_years.desc(), User.id.asc())
+    )
 
 
 def list_eligible_users(db: Session, task: Task, limit: int = 50, offset: int = 0) -> list[User]:
-    return db.execute(_eligible_users_query(db, task).limit(limit).offset(offset)).scalars().all()
+    return db.execute(_eligible_users_query(task).limit(limit).offset(offset)).scalars().all()
+
+
+def _iter_eligible_user_ids(db: Session, task: Task, batch_size: int = 5000):
+    last_user_id = 0
+    filters = _eligible_user_filters(task)
+    while True:
+        user_ids = list(
+            db.execute(
+                select(User.id)
+                .where(*filters, User.id > last_user_id)
+                .order_by(User.id.asc())
+                .limit(batch_size)
+            )
+            .scalars()
+            .all()
+        )
+        if not user_ids:
+            break
+        yield user_ids
+        last_user_id = user_ids[-1]
 
 
 def recompute_task_assignment(db: Session, task_id: int, reason: str) -> AssignmentResult:
@@ -69,19 +97,17 @@ def recompute_task_assignment(db: Session, task_id: int, reason: str) -> Assignm
             eligible_user_count=0,
         )
 
-    eligible_users = list_eligible_users(db, task, limit=200, offset=0)
-    eligible_user_count = len(eligible_users)
-    selected_user = eligible_users[0] if eligible_users else None
+    selected_user = db.execute(_eligible_users_query(task).limit(1)).scalar_one_or_none()
+    eligible_user_count = 0
     new_assignee_id = selected_user.id if selected_user else None
 
     db.execute(
         delete(TaskEligibleUser).where(TaskEligibleUser.task_id == task.id)
     )
-    if eligible_users:
-        db.add_all([
-            TaskEligibleUser(task_id=task.id, user_id=user.id)
-            for user in eligible_users
-        ])
+    for user_ids in _iter_eligible_user_ids(db, task):
+        eligible_user_count += len(user_ids)
+        db.add_all([TaskEligibleUser(task_id=task.id, user_id=user_id) for user_id in user_ids])
+        db.flush()
 
     if previous_assignee_id != new_assignee_id:
         if previous_assignee_id and is_active_task(task.status):

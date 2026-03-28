@@ -621,8 +621,7 @@ function Header() {
         <span className="brand-title">TaskFlow</span>
       </div>
       <div className="header-right">
-        <button className="header-btn">Donor Login</button>
-        <button className="header-btn">Surveyor Login</button>
+
       </div>
     </header>
   );
